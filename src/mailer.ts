@@ -73,25 +73,70 @@ export function renderEnquiryEmail(e: StoredEnquiry) {
   return { subject, text, html };
 }
 
+/**
+ * Sender for outgoing mail. MAIL_FROM may be `Name <address>` or just `Name`/empty;
+ * without an address, the authenticated mailbox (SMTP_USER) is used.
+ */
+export function resolveFrom(config: Pick<Config, "MAIL_FROM" | "SMTP_USER">): { name: string; address: string } {
+  const raw = config.MAIL_FROM.trim().replace(/^"|"$/g, "");
+  const match = raw.match(/^\s*"?([^"<]*?)"?\s*<([^>]+)>\s*$/);
+  if (match) return { name: match[1]!.trim() || "OLIVED Website", address: match[2]!.trim() };
+  if (raw.includes("@")) return { name: "OLIVED Website", address: raw };
+  return { name: raw || "OLIVED Website", address: config.SMTP_USER };
+}
+
 export function createMailer(config: Config, log: Pick<Console, "warn" | "error"> = console): Mailer {
   if (!config.SMTP_HOST) {
-    log.warn("[mailer] SMTP_HOST is not set — enquiries will be saved but not emailed.");
+    log.warn(
+      "[mailer] SMTP_HOST is not set in .env — enquiries are saved to data/enquiries.jsonl but NOT emailed.",
+    );
     return { sendEnquiry: async () => false };
+  }
+
+  if (config.SMTP_USER && !config.SMTP_PASS) {
+    log.error("[mailer] SMTP_USER is set but SMTP_PASS is empty in .env — the SMTP login will fail.");
+  }
+
+  const from = resolveFrom(config);
+  // Most hosted mailboxes (Hostinger included) refuse to send "from" an address other than
+  // the one you log in with — flag it at startup instead of failing on the first enquiry.
+  if (config.SMTP_USER && from.address.toLowerCase() !== config.SMTP_USER.toLowerCase()) {
+    log.warn(
+      `[mailer] MAIL_FROM (${from.address}) differs from SMTP_USER (${config.SMTP_USER}). ` +
+        "Your provider may reject it unless it is an alias of that mailbox.",
+    );
   }
 
   const transport = nodemailer.createTransport({
     host: config.SMTP_HOST,
     port: config.SMTP_PORT,
-    secure: config.SMTP_SECURE,
+    // Port 465 is implicit TLS; 587 upgrades with STARTTLS.
+    secure: config.SMTP_SECURE || config.SMTP_PORT === 465,
     auth: config.SMTP_USER ? { user: config.SMTP_USER, pass: config.SMTP_PASS } : undefined,
+    connectionTimeout: 15_000,
+    greetingTimeout: 10_000,
+    socketTimeout: 20_000,
   });
+
+  // Check the SMTP connection at startup so a wrong host or password shows up in the
+  // log immediately, not only when a buyer submits the form.
+  transport
+    .verify()
+    .then(() => log.warn(`[mailer] SMTP ready (${config.SMTP_HOST}:${config.SMTP_PORT}) — enquiries go to ${config.MAIL_TO}.`))
+    .catch((err: unknown) =>
+      log.error(
+        `[mailer] Cannot connect to SMTP ${config.SMTP_HOST}:${config.SMTP_PORT}. Check SMTP_* in .env ` +
+          "(Hostinger: smtp.hostinger.com, port 465, full email address as SMTP_USER, mailbox password as SMTP_PASS).",
+        err,
+      ),
+    );
 
   return {
     async sendEnquiry(enquiry) {
       const { subject, text, html } = renderEnquiryEmail(enquiry);
       try {
         await transport.sendMail({
-          from: config.MAIL_FROM,
+          from,
           to: config.MAIL_TO,
           replyTo: { name: enquiry.fullName, address: enquiry.email },
           subject,

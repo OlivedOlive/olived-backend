@@ -48,5 +48,27 @@ Keep that folder outside any public web root.
 
 ## Email
 
-Set `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` (and `SMTP_SECURE=true` for port 465).
-Emails go to `MAIL_TO` with `Reply-To` set to the buyer, so replying answers them directly.
+`olived.tn` mail is hosted by **Hostinger** (MX `mx1/mx2.hostinger.com`), and `.env` is already set up for it:
+
+```
+SMTP_HOST=smtp.hostinger.com
+SMTP_PORT=465            # SSL; 587 with SMTP_SECURE=false also works
+SMTP_USER=Contact@olived.tn
+SMTP_PASS=               # ← the mailbox password (hPanel → Emails → Email accounts)
+MAIL_FROM="OLIVED Website"
+MAIL_TO=Contact@olived.tn
+```
+
+Then check it with:
+
+```bash
+npm run mail:test
+```
+
+Notes:
+
+- Emails are sent **from** the `SMTP_USER` mailbox: Hostinger rejects other sender addresses
+  (the old site's `no-reply@olived.tn` would have been refused). The startup log warns if `MAIL_FROM` differs.
+- `Reply-To` is the buyer, so pressing *Reply* answers them directly.
+- On startup the server tests the SMTP login and logs `SMTP ready` or the exact error.
+- If SMTP fails, the enquiry is still saved in `data/enquiries.jsonl` and the visitor still sees a success message.

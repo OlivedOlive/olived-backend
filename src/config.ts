@@ -29,7 +29,8 @@ const envSchema = z.object({
   SMTP_USER: z.string().default(""),
   SMTP_PASS: z.string().default(""),
 
-  MAIL_FROM: z.string().default("OLIVED Website <no-reply@olived.tn>"),
+  /** Sender. A name only (or empty) sends from the SMTP_USER mailbox, which most providers require. */
+  MAIL_FROM: z.string().default("OLIVED Website"),
   MAIL_TO: z.string().default("Contact@olived.tn"),
 
   /** Max enquiries per IP per window. */

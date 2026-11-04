@@ -2,7 +2,7 @@ import request from "supertest";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "../src/app.js";
 import { loadConfig } from "../src/config.js";
-import { renderEnquiryEmail, type Mailer } from "../src/mailer.js";
+import { renderEnquiryEmail, resolveFrom, type Mailer } from "../src/mailer.js";
 import type { EnquiryStore, StoredEnquiry } from "../src/storage.js";
 
 const silent = { info() {}, warn() {}, error() {} };
@@ -164,6 +164,32 @@ describe("renderEnquiryEmail", () => {
     expect(html).not.toContain("<script>");
     expect(html).toContain("&lt;script&gt;");
     expect(subject).toBe("New enquiry — Acme (FR)");
+  });
+});
+
+describe("resolveFrom", () => {
+  const user = "Contact@olived.tn";
+
+  it("sends from the SMTP mailbox when MAIL_FROM is only a name", () => {
+    expect(resolveFrom({ MAIL_FROM: "OLIVED Website", SMTP_USER: user })).toEqual({
+      name: "OLIVED Website",
+      address: user,
+    });
+  });
+
+  it("accepts a quoted name with an address", () => {
+    expect(resolveFrom({ MAIL_FROM: '"OLIVED Website" <sales@olived.tn>', SMTP_USER: user })).toEqual({
+      name: "OLIVED Website",
+      address: "sales@olived.tn",
+    });
+  });
+
+  it("accepts a bare address and falls back to a default name", () => {
+    expect(resolveFrom({ MAIL_FROM: "sales@olived.tn", SMTP_USER: user })).toEqual({
+      name: "OLIVED Website",
+      address: "sales@olived.tn",
+    });
+    expect(resolveFrom({ MAIL_FROM: "", SMTP_USER: user })).toEqual({ name: "OLIVED Website", address: user });
   });
 });
 
