@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { parse } from "dotenv";
 import request from "supertest";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "../src/app.js";
@@ -190,6 +192,16 @@ describe("resolveFrom", () => {
       address: "sales@olived.tn",
     });
     expect(resolveFrom({ MAIL_FROM: "", SMTP_USER: user })).toEqual({ name: "OLIVED Website", address: user });
+  });
+});
+
+describe(".env.example", () => {
+  it("is a valid configuration as copied, so the README quick start boots", () => {
+    const env = parse(readFileSync(new URL("../.env.example", import.meta.url)));
+    const config = loadConfig(env);
+    expect(config.PORT).toBe(4000);
+    expect(config.FRONTEND_ORIGIN).toBe("http://localhost:3000");
+    expect(config.SMTP_HOST).toBe("");
   });
 });
 

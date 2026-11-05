@@ -71,4 +71,6 @@ Notes:
   (the old site's `no-reply@olived.tn` would have been refused). The startup log warns if `MAIL_FROM` differs.
 - `Reply-To` is the buyer, so pressing *Reply* answers them directly.
 - On startup the server tests the SMTP login and logs `SMTP ready` or the exact error.
-- If SMTP fails, the enquiry is still saved in `data/enquiries.jsonl` and the visitor still sees a success message.
+- If SMTP fails, the enquiry is still saved in `data/enquiries.jsonl`. The API returns `mailed: false`, and the
+  visitor is told the request is saved and to email us if they get no reply within 24 business hours.
+  Nobody is alerted automatically, so check that file if `[mailer]` errors appear in the log.

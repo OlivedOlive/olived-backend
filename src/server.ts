@@ -11,6 +11,8 @@ const app = createApp({
   mailer: createMailer(config),
 });
 
-app.listen(config.PORT, () => {
+// Express 5 reports bind failures (port in use) here instead of throwing.
+app.listen(config.PORT, (err) => {
+  if (err) throw err;
   console.info(`OLIVED API listening on http://localhost:${config.PORT} (${config.NODE_ENV})`);
 });
