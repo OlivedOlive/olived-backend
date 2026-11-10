@@ -1,4 +1,5 @@
 import express, { Router, type RequestHandler } from "express";
+import { rateLimit } from "express-rate-limit";
 import { allowedOrigins, type Config } from "../../config.js";
 import { loadAuth } from "./auth/session.js";
 import type { Db } from "./db.js";
@@ -7,15 +8,33 @@ import { authRoutes } from "./routes/auth.js";
 import { catalogRoutes } from "./routes/catalog.js";
 import { designRoutes, reviewRoutes } from "./routes/designs.js";
 
-/** Second layer against cross-site requests, on top of the SameSite cookie. */
+/**
+ * Second layer against cross-site requests (CSRF), on top of the SameSite cookie: a change must
+ * come from the website, judged by the Origin header and, when the browser sends it, Sec-Fetch-Site.
+ */
 function rejectOtherOrigins(allowed: string[]): RequestHandler {
   return (req, _res, next) => {
+    if (req.method === "GET" || req.method === "HEAD") return next();
     const { origin } = req.headers;
-    if (req.method !== "GET" && req.method !== "HEAD" && origin && !allowed.includes(origin)) {
+    const crossSite = req.headers["sec-fetch-site"] === "cross-site";
+    if ((origin && !allowed.includes(origin)) || crossSite) {
       throw new HttpError(403, "This request is not allowed from another website.");
     }
     next();
   };
+}
+
+/** Caps the changes one account can make, so a single login cannot flood the server. */
+function limitChangesPerUser(): RequestHandler {
+  return rateLimit({
+    windowMs: 60 * 1000,
+    limit: 120,
+    standardHeaders: "draft-8",
+    legacyHeaders: false,
+    skip: (req) => req.method === "GET" || req.method === "HEAD" || !req.auth,
+    keyGenerator: (req) => `user:${req.auth?.user.id}`,
+    message: { error: "You are making changes too quickly. Please wait a minute." },
+  });
 }
 
 /**
@@ -32,7 +51,8 @@ export function studioRoutes(config: Config, db: Db) {
 
   router.use(rejectOtherOrigins(allowedOrigins(config).map((o) => new URL(o).origin)));
   router.use(express.json({ limit: "200kb" }));
-  router.use(loadAuth(db));
+  router.use(loadAuth(db, config));
+  router.use(limitChangesPerUser());
 
   router.use("/auth", authRoutes(db, config));
   router.use("/catalog", catalogRoutes(db));
