@@ -48,14 +48,17 @@ const envSchema = z
       .default("")
       .refine((v) => v === "" || v.startsWith("mysql://"), "must start with mysql://"),
 
-    /** How long a studio login lasts, in days. */
-    SESSION_DAYS: z.coerce.number().int().positive().default(14),
+    /** Days a studio login lasts without being used. Using the studio renews it. */
+    SESSION_DAYS: z.coerce.number().int().positive().default(30),
 
     /** Makes the studio login cookie HTTPS only. Must be true in production. */
     COOKIE_SECURE: boolFromEnv,
 
-    /** Studio login and sign-up attempts allowed per IP address every 15 minutes. */
+    /** Studio sign-ups, and failed logins, allowed per IP address every 15 minutes. */
     AUTH_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(20),
+
+    /** Wrong passwords for one account before it is locked for 15 minutes. */
+    LOGIN_MAX_FAILURES: z.coerce.number().int().positive().default(5),
   })
   .refine((env) => env.NODE_ENV !== "production" || !env.DATABASE_URL || env.COOKIE_SECURE, {
     path: ["COOKIE_SECURE"],

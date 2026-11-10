@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { hashPassword, verifyPassword } from "../../src/modules/studio/auth/password.js";
+import { weakPasswordReason } from "../../src/modules/studio/auth/password-policy.js";
 import { loadConfig } from "../../src/config.js";
 import { checkDesign } from "../../src/modules/studio/designs/validate.js";
 
@@ -43,5 +44,24 @@ describe("config", () => {
   it("refuses production without HTTPS-only cookies", () => {
     expect(() => loadConfig({ ...env, NODE_ENV: "production" })).toThrow(/COOKIE_SECURE/);
     expect(loadConfig({ ...env, NODE_ENV: "production", COOKIE_SECURE: "true" }).COOKIE_SECURE).toBe(true);
+  });
+});
+
+describe("password policy", () => {
+  const person = { email: "karim.ben@example.com", name: "Karim Ben Salah" };
+
+  it("accepts a long, unrelated password", () => {
+    expect(weakPasswordReason("green olive harvest 2026", person)).toBeNull();
+  });
+
+  it("refuses common, numbers-only and repetitive passwords", () => {
+    expect(weakPasswordReason("Password123", person)).toMatch(/common/);
+    expect(weakPasswordReason("9876543210", person)).toMatch(/numbers/);
+    expect(weakPasswordReason("aaaaabbbbb", person)).toMatch(/different/);
+  });
+
+  it("refuses a password containing the person's name or email", () => {
+    expect(weakPasswordReason("karimrocks2026", person)).toMatch(/name or email/);
+    expect(weakPasswordReason("my-salah-password", person)).toMatch(/name or email/);
   });
 });

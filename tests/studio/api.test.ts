@@ -16,6 +16,7 @@ const colors = { primary: "#1c1a16", secondary: "#b08d57" };
 describe.skipIf(!url)("API with MySQL", () => {
   let db: Db;
   let app: ReturnType<typeof createApp>;
+  let config: ReturnType<typeof loadConfig>;
   let templateId: string;
   let marketId: string;
 
@@ -35,7 +36,7 @@ describe.skipIf(!url)("API with MySQL", () => {
 
   beforeAll(async () => {
     if (!new URL(url!).pathname.includes("test")) throw new Error("TEST_DATABASE_URL must name a test database");
-    const config = loadConfig({ DATABASE_URL: url, FRONTEND_ORIGIN: ORIGIN, AUTH_RATE_LIMIT_MAX: "1000" });
+    config = loadConfig({ DATABASE_URL: url, FRONTEND_ORIGIN: ORIGIN, AUTH_RATE_LIMIT_MAX: "1000" });
     db = createDb(url!);
     app = createApp({ config, db, store: { save: async () => {} }, mailer: { sendEnquiry: async () => false }, log: silent });
 
@@ -85,7 +86,7 @@ describe.skipIf(!url)("API with MySQL", () => {
   });
 
   it("reports health", async () => {
-    await request(app).get("/health").expect(200, { status: "ok" });
+    await request(app).get("/api/studio/health").expect(200, { status: "ok" });
   });
 
   it("signs up, logs out and logs back in", async () => {
@@ -100,6 +101,56 @@ describe.skipIf(!url)("API with MySQL", () => {
     await agent.post("/api/studio/auth/login").send({ email: "A@example.com", password: "nope" }).expect(401);
     await agent.post("/api/studio/auth/login").send({ email: "A@example.com", password: "long enough password" }).expect(200);
     await agent.get("/api/studio/auth/me").expect(200);
+  });
+
+  it("keeps a login across server restarts and renews it while it is used", async () => {
+    const agent = await signUp("stay@example.com");
+    const { id: userId } = (await agent.get("/api/studio/auth/me").expect(200)).body.user;
+    await db.session.deleteMany({ where: { userId } });
+    const login = await request(app)
+      .post("/api/studio/auth/login")
+      .send({ email: "stay@example.com", password: "long enough password" })
+      .expect(200);
+    const cookie = String(login.headers["set-cookie"]).split(";")[0]!;
+
+    // A new app on the same database, as after a restart: still logged in, nothing renewed yet.
+    const restarted = createApp({ config, db, store: { save: async () => {} }, mailer: { sendEnquiry: async () => false }, log: silent });
+    const fresh = await request(restarted).get("/api/studio/auth/me").set("Cookie", cookie).expect(200);
+    expect(fresh.headers["set-cookie"]).toBeUndefined();
+
+    // Past half its life, the next request pushes the expiry back to the full length.
+    const soon = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    await db.session.updateMany({ where: { userId }, data: { expiresAt: soon } });
+    const renewed = await request(restarted).get("/api/studio/auth/me").set("Cookie", cookie).expect(200);
+    expect(String(renewed.headers["set-cookie"])).toContain("olived_studio_session=");
+    const session = await db.session.findFirstOrThrow({ where: { userId } });
+    expect(session.expiresAt.getTime()).toBeGreaterThan(Date.now() + (config.SESSION_DAYS - 1) * 24 * 60 * 60 * 1000);
+  });
+
+  it("locks one account after repeated wrong passwords, without affecting others", async () => {
+    await signUp("locked@example.com");
+    await signUp("unlocked@example.com");
+    const tryLogin = (email: string, password: string) =>
+      request(app).post("/api/studio/auth/login").send({ email, password });
+
+    for (let i = 0; i < config.LOGIN_MAX_FAILURES; i++) await tryLogin("locked@example.com", "wrong").expect(401);
+    // Even the right password is refused now, and the lockout message says why.
+    const locked = await tryLogin("LOCKED@example.com", "long enough password").expect(429);
+    expect(locked.body.error).toMatch(/wait 15 minutes/);
+
+    await tryLogin("unlocked@example.com", "long enough password").expect(200);
+  });
+
+  it("refuses a common password, or one with the person's name", async () => {
+    const base = { name: "Leila Trabelsi", company: "Leila Co", email: "leila@example.com" };
+    const common = await client().post("/api/studio/auth/register").send({ ...base, password: "password123" }).expect(400);
+    expect(common.body.fields.password).toMatch(/common/);
+    const named = await client().post("/api/studio/auth/register").send({ ...base, password: "trabelsi-2026!" }).expect(400);
+    expect(named.body.fields.password).toMatch(/name or email/);
+  });
+
+  it("refuses changes the browser marks as coming from another website", async () => {
+    await request(app).post("/api/studio/auth/logout").set("Sec-Fetch-Site", "cross-site").expect(403);
   });
 
   it("refuses a duplicate email and a weak password", async () => {
