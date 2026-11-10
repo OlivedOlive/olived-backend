@@ -1,17 +1,63 @@
 # olived-backend
 
-Express 5 + TypeScript API that receives quote requests from the OLIVED website.
+Express 5 + TypeScript API for OLIVED. One server, one `package.json`, one `.env`, split into modules:
+
+| Module | Routes | What it does |
+|---|---|---|
+| `src/modules/enquiries` | `/api/enquiries` | Quote requests from the website forms: saved to a file and emailed |
+| `src/modules/studio` | `/api/studio/*` | OLIVED Studio: accounts, catalog, packaging designs and review (MySQL) |
+
+```
+src/
+  server.ts        starts the API (port 4000)
+  worker.ts        studio background jobs (market checks, cleanup)
+  app.ts           mounts the modules
+  config.ts        every setting, read from .env
+  modules/
+    enquiries/     index.ts (routes), enquiry-schema.ts, mailer.ts, storage.ts
+    studio/        index.ts (routes), auth/, designs/, jobs/, routes/, db.ts, errors.ts
+  scripts/         send-test-email.ts
+  generated/       Prisma client (made by `npm install`, not committed)
+prisma/            studio database schema, migrations and sample seed
+tests/             enquiries.test.ts, studio/
+```
+
+The studio is optional: with `DATABASE_URL` empty, `/api/studio/*` answers 503 and the enquiries keep working.
 
 ## Scripts
 
 | Command | What it does |
 |---|---|
 | `npm run dev` | Start with auto-reload on http://localhost:4000 |
-| `npm test` | Run the API tests (vitest + supertest) |
+| `npm run worker:dev` | Start the studio worker (needs `DATABASE_URL`) |
+| `npm test` | Run the tests (studio database tests need `TEST_DATABASE_URL`) |
 | `npm run typecheck` | Type-check without emitting |
-| `npm run build` / `npm start` | Compile to `dist/` and run it in production |
+| `npm run build` / `npm start` / `npm run worker` | Compile to `dist/` and run it in production |
+| `npm run mail:test` | Send a test enquiry email |
+| `npm run db:deploy` | Create or update the studio tables |
+| `npm run db:seed` | Add the sample catalog and market rules |
+| `npm run db:migrate` | Create a migration after you change `prisma/schema.prisma` |
+| `npm run db:studio` | Open a database browser |
 
 Configuration is read from `.env` — see [`.env.example`](.env.example) for every option.
+
+## OLIVED Studio
+
+1. Create a MySQL database and user, and set `DATABASE_URL` in `.env`.
+2. Run `npm run db:deploy`, then `npm run db:seed`.
+3. Start `npm run dev` and `npm run worker:dev`.
+
+The studio pages are on the website (`olived-frontend`, under `/studio`). It forwards `/api/studio/*` here,
+so set `FRONTEND_ORIGIN` to the website's address: changes from any other origin are refused.
+
+- **Client privacy:** MySQL has no row-level security. Every client query for designs must go through
+  `designsFor(db, organizationId)` in `src/modules/studio/designs/repository.ts`. Do not query `db.design` directly from a route.
+- **Versions** are never edited. Each save adds one, so an approval always points at what was approved.
+- **Market rules** are JSON in `rule_sets`. Add new kinds of check in `src/modules/studio/designs/validate.ts`.
+- **Background work** goes in the `jobs` table with `enqueue`; handlers live in `src/modules/studio/jobs/handlers.ts`.
+- **Login** uses a random token in an HTTP-only cookie. Only its hash is stored.
+- The database tests **empty** their database. Use a separate one whose name contains `test`:
+  `TEST_DATABASE_URL=mysql://user:password@127.0.0.1:3306/olived_studio_test npm test`
 
 ## API
 

@@ -3,8 +3,8 @@
  * checked without submitting the website form.  Usage:  npm run mail:test
  */
 import { randomUUID } from "node:crypto";
-import { loadConfig } from "./config.js";
-import { createMailer } from "./mailer.js";
+import { loadConfig } from "../config.js";
+import { createMailer } from "../modules/enquiries/mailer.js";
 
 const config = loadConfig();
 

@@ -1,17 +1,28 @@
 {
   "name": "olived-backend",
   "version": "1.0.0",
-  "description": "OLIVED website API — receives export enquiries, stores them and emails the sales team.",
+  "description": "OLIVED API: website export enquiries and OLIVED Studio (private label accounts, catalog and packaging designs).",
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "build": "tsc -p tsconfig.build.json",
+    "worker:dev": "tsx watch src/worker.ts",
+    "build": "prisma generate && tsc -p tsconfig.build.json",
     "start": "node dist/server.js",
+    "worker": "node dist/worker.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "mail:test": "tsx src/send-test-email.ts"
+    "mail:test": "tsx src/scripts/send-test-email.ts",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy",
+    "db:seed": "prisma db seed",
+    "db:studio": "prisma studio",
+    "postinstall": "prisma generate"
   },
   "type": "module",
   "dependencies": {
+    "@prisma/adapter-mariadb": "^7.10.1",
+    "@prisma/client": "^7.10.1",
+    "cookie": "^1.1.1",
     "cors": "^2.8.6",
     "dotenv": "^18.0.9",
     "express": "^5.3.0",
@@ -26,6 +37,7 @@
     "@types/node": "^26.6.6",
     "@types/nodemailer": "^8.0.2",
     "@types/supertest": "^7.2.1",
+    "prisma": "^7.10.1",
     "supertest": "^7.3.1",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
@@ -34,6 +46,6 @@
   "private": true,
   "license": "UNLICENSED",
   "engines": {
-    "node": ">=20"
+    "node": ">=22.12"
   }
 }

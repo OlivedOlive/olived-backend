@@ -1,5 +1,5 @@
 import nodemailer from "nodemailer";
-import type { Config } from "./config.js";
+import type { Config } from "../../config.js";
 import type { StoredEnquiry } from "./storage.js";
 
 export interface Mailer {
