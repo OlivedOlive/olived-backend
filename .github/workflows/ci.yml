@@ -33,6 +33,7 @@ jobs:
       - name: Type-check
         run: npm run typecheck
 
+      # Without TEST_DATABASE_URL the studio's database tests are skipped.
       - name: Test
         run: npm test
 

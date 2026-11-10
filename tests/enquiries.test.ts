@@ -4,8 +4,8 @@ import request from "supertest";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "../src/app.js";
 import { loadConfig } from "../src/config.js";
-import { renderEnquiryEmail, resolveFrom, type Mailer } from "../src/mailer.js";
-import type { EnquiryStore, StoredEnquiry } from "../src/storage.js";
+import { renderEnquiryEmail, resolveFrom, type Mailer } from "../src/modules/enquiries/mailer.js";
+import type { EnquiryStore, StoredEnquiry } from "../src/modules/enquiries/storage.js";
 
 const silent = { info() {}, warn() {}, error() {} };
 
@@ -209,5 +209,14 @@ describe("GET /api/health", () => {
   it("responds ok", async () => {
     const res = await request(setup().app).get("/api/health");
     expect(res.body).toEqual({ ok: true });
+  });
+});
+
+describe("OLIVED Studio without a database", () => {
+  it("answers 503 and leaves the enquiries working", async () => {
+    const { app } = setup();
+    const res = await request(app).get("/api/studio/auth/me");
+    expect(res.status).toBe(503);
+    expect((await request(app).post("/api/enquiries").send({ ...base, source: "home" })).status).toBe(201);
   });
 });
