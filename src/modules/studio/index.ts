@@ -6,7 +6,7 @@ import type { Db } from "./db.js";
 import { errorHandler, HttpError } from "./errors.js";
 import { authRoutes } from "./routes/auth.js";
 import { catalogRoutes } from "./routes/catalog.js";
-import { designRoutes, reviewRoutes } from "./routes/designs.js";
+import { adminRoutes, designRoutes, reviewRoutes } from "./routes/designs.js";
 
 /**
  * Second layer against cross-site requests (CSRF), on top of the SameSite cookie: a change must
@@ -58,6 +58,7 @@ export function studioRoutes(config: Config, db: Db) {
   router.use("/catalog", catalogRoutes(db));
   router.use("/designs", designRoutes(db));
   router.use("/review", reviewRoutes(db));
+  router.use("/admin", adminRoutes(db));
 
   router.use((_req, res) => {
     res.status(404).json({ error: "Not found." });

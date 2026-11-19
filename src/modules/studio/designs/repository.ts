@@ -94,12 +94,12 @@ export function designsFor(db: Db, organizationId: string) {
     },
 
     async submit(id: string, userId: string) {
-      const design = await find(id);
-      const version = design.versions[0];
-      if (!version) throw new HttpError(409, "This design has nothing to submit.");
+      await find(id);
 
       await db.$transaction(async (tx) => {
         await lockEditable(tx, id, { status: "SUBMITTED" });
+        const version = await tx.designVersion.findFirst({ where: { designId: id }, orderBy: { number: "desc" } });
+        if (!version) throw new HttpError(409, "This design has nothing to submit.");
         await enqueue(tx, "design.validate", { versionId: version.id });
         await tx.auditLog.create({
           data: {
@@ -129,15 +129,24 @@ export function reviewQueue(db: Db) {
       return designs.filter((d) => d.versions[0]?.validationResults[0]?.passed);
     },
 
-    async decide(id: string, decision: "APPROVED" | "CHANGES_REQUESTED", comment: string | undefined, reviewerId: string) {
-      const design = await db.design.findUnique({ where: { id }, include: { versions: latestVersion } });
-      const version = design?.versions[0];
-      if (!design || !version) throw new HttpError(404, "Design not found.");
-      if (!version.validationResults[0]?.passed) throw new HttpError(409, "This version has not passed the market checks.");
+    listForAdmin() {
+      return db.design.findMany({
+        orderBy: { updatedAt: "desc" },
+        include: { ...designDetails, organization: { select: { name: true } }, createdBy: { select: { id: true, name: true, email: true } } },
+      });
+    },
 
+    async decide(id: string, decision: "APPROVED" | "CHANGES_REQUESTED", comment: string | undefined, reviewerId: string, expectedVersionId?: string) {
       await db.$transaction(async (tx) => {
         const { count } = await tx.design.updateMany({ where: { id, status: "SUBMITTED" }, data: { status: decision } });
+        const design = await tx.design.findUnique({ where: { id }, include: { versions: latestVersion } });
+        const version = design?.versions[0];
+        if (!design || !version) throw new HttpError(404, "Design not found.");
+        if (!version.validationResults[0]?.passed) throw new HttpError(409, "This version has not passed the market checks.");
         if (count === 0) throw new HttpError(409, "This design is not waiting for review.");
+        if (expectedVersionId && version.id !== expectedVersionId) {
+          throw new HttpError(409, "A newer version was submitted. Reload the design before reviewing it.");
+        }
         await tx.approval.create({ data: { versionId: version.id, reviewerId, decision, comment: comment ?? null } });
         await tx.auditLog.create({
           data: {

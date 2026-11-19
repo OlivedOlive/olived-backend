@@ -11,13 +11,16 @@ export function enqueue(tx: Prisma.TransactionClient, type: string, payload: Pri
   return tx.job.create({ data: { type, payload } });
 }
 
-async function claimNext(db: Db): Promise<Job | null> {
+async function claimNext(db: Db, versionId?: string): Promise<Job | null> {
   const now = new Date();
   return db.$transaction(async (tx) => {
     // SKIP LOCKED lets several workers run without taking the same job.
     const rows = await tx.$queryRaw<{ id: string }[]>`
       SELECT id FROM jobs
       WHERE status = 'PENDING' AND runAt <= ${now}
+        AND (${versionId ?? null} IS NULL OR (
+          type = 'design.validate' AND JSON_UNQUOTE(JSON_EXTRACT(payload, '$.versionId')) = ${versionId ?? null}
+        ))
       ORDER BY runAt
       LIMIT 1
       FOR UPDATE SKIP LOCKED`;
@@ -38,8 +41,8 @@ export async function requeueStaleJobs(db: Db) {
 }
 
 /** Runs one job, if one is due. Returns false when there was nothing to do. */
-export async function runNextJob(db: Db, handlers: Record<string, JobHandler>): Promise<boolean> {
-  const job = await claimNext(db);
+export async function runNextJob(db: Db, handlers: Record<string, JobHandler>, versionId?: string): Promise<boolean> {
+  const job = await claimNext(db, versionId);
   if (!job) return false;
 
   try {
