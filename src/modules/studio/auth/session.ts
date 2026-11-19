@@ -112,6 +112,11 @@ export const requireReviewer: RequestHandler = (req, _res, next) => {
   next();
 };
 
+export const requireAdmin: RequestHandler = (req, _res, next) => {
+  if (authOf(req).role !== "OLIVED_ADMIN") throw new HttpError(403, "This page is for OLIVED administrators.");
+  next();
+};
+
 /** The session of a route behind requireAuth. */
 export function authOf(req: { auth?: Auth }): Auth {
   if (!req.auth) throw new HttpError(401, "Please log in.");

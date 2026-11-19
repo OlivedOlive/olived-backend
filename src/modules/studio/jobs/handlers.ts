@@ -8,7 +8,8 @@ const validatePayload = z.object({ versionId: z.string() });
 /** Checks a submitted version against the market's latest published rules. */
 const validateDesign: JobHandler = async (payload, db) => {
   const { versionId } = validatePayload.parse(payload);
-  const version = await db.designVersion.findUniqueOrThrow({ where: { id: versionId }, include: { design: true } });
+  const version = await db.designVersion.findUnique({ where: { id: versionId }, include: { design: true } });
+  if (!version) return; // A deleted design has no artwork left to validate.
   const ruleSet = await db.ruleSet.findFirst({
     where: { marketId: version.design.marketId, status: "PUBLISHED" },
     orderBy: { version: "desc" },

@@ -35,7 +35,7 @@ The studio is optional: with `DATABASE_URL` empty, `/api/studio/*` answers 503 a
 | `npm run build` / `npm start` / `npm run worker` | Compile to `dist/` and run it in production |
 | `npm run mail:test` | Send a test enquiry email |
 | `npm run db:deploy` | Create or update the studio tables |
-| `npm run db:seed` | Add the sample catalog and market rules |
+| `npm run db:seed` | Add the OLIVED Studio catalog and destination checklists |
 | `npm run db:migrate` | Create a migration after you change `prisma/schema.prisma` |
 | `npm run db:studio` | Open a database browser |
 
@@ -46,6 +46,19 @@ Configuration is read from `.env` — see [`.env.example`](.env.example) for eve
 1. Create a MySQL database and user, and set `DATABASE_URL` in `.env`.
 2. Run `npm run db:deploy`, then `npm run db:seed`.
 3. Start `npm run dev` and `npm run worker:dev`.
+
+The Studio seed includes ORZETA Sun, Grove and Organic across the catalog packaging formats, Oussoul
+750 mL and two private-label oil selections. The destination options are based on the supplied
+Marasca artwork, plus an entry for another destination. Market checklists verify field completeness.
+The 170 × 171 mm Marasca artwork page is a reference; supplier trim, material, label fit and case
+specifications must be confirmed before production. Oussoul claims and organic marks require
+market-specific approval and supporting documentation.
+
+To create a Studio admin, run `npm run admin:create -- admin@example.com` from a private terminal
+with the Studio database configured and migrated. The command prints a generated password once.
+You can supply your own password with the `STUDIO_ADMIN_PASSWORD` environment variable.
+Sign in at `/studio/login` to open `/studio/admin`. The dashboard shows validation results and
+lets admins confirm approvals or request changes with an in-app message for the client.
 
 The studio pages are on the website (`olived-frontend`, under `/studio`). It forwards `/api/studio/*` here,
 so set `FRONTEND_ORIGIN` to the website's address: changes from any other origin are refused.

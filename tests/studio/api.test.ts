@@ -280,6 +280,45 @@ describe.skipIf(!url)("API with MySQL", () => {
     expect(saved.status).toBe(201);
   });
 
+  it("restricts the admin dashboard and records decisions for the checked version", async () => {
+    const buyer = await signUp("admin-flow-buyer@example.com");
+    const { body } = await newDesign(buyer, { brandName: "Zeta" });
+    const { id } = body.design;
+    const path = `/api/studio/admin/designs/${id}/decision`;
+    const validatePath = `/api/studio/admin/designs/${id}/validate`;
+    await buyer.post(`/api/studio/designs/${id}/submit`).expect(200);
+    await request(app).get("/api/studio/admin/designs").expect(401);
+    await buyer.get("/api/studio/admin/designs").expect(403);
+    await buyer.post(path).send({ decision: "APPROVED" }).expect(403);
+    await buyer.post(validatePath).send({ versionId: "anything" }).expect(403);
+
+    await db.user.create({
+      data: {
+        email: "dashboard-admin@example.com",
+        name: "Dashboard Admin",
+        passwordHash: await hashPassword("long enough password"),
+        memberships: { create: { role: "OLIVED_ADMIN", organization: { create: { name: "OLIVED" } } } },
+      },
+    });
+    const admin = client();
+    await admin.post("/api/studio/auth/login")
+      .send({ email: "dashboard-admin@example.com", password: "long enough password" }).expect(200);
+
+    const pending = (await admin.get("/api/studio/admin/designs").expect(200)).body.designs;
+    const version = pending.find((design: { id: string }) => design.id === id).versions[0];
+    expect(version.validationResults).toEqual([]);
+    await admin.post(path).send({ decision: "APPROVED", versionId: version.id }).expect(409);
+    await admin.post(validatePath).send({ versionId: "outdated" }).expect(409);
+    await admin.post(validatePath).send({ versionId: version.id }).expect(200, { passed: true });
+    await admin.post(path).send({ decision: "APPROVED", versionId: "old-version" }).expect(409);
+    await admin.post(path).send({ decision: "CHANGES_REQUESTED", versionId: version.id }).expect(400);
+    await admin.post(path).send({ decision: "APPROVED", versionId: version.id, comment: "Ready for production review." }).expect(200);
+
+    const { design } = (await buyer.get(`/api/studio/designs/${id}`).expect(200)).body;
+    expect(design.status).toBe("APPROVED");
+    expect(design.versions[0].approvals).toEqual([{ decision: "APPROVED", comment: "Ready for production review." }]);
+  });
+
   it("retries a failing job and gives up after the last attempt", async () => {
     const job = await db.job.create({ data: { type: "unknown", payload: {}, maxAttempts: 2 } });
     await runNextJob(db, handlers);
