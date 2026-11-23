@@ -129,11 +129,20 @@ export function reviewQueue(db: Db) {
       return designs.filter((d) => d.versions[0]?.validationResults[0]?.passed);
     },
 
-    listForAdmin() {
-      return db.design.findMany({
-        orderBy: { updatedAt: "desc" },
-        include: { ...designDetails, organization: { select: { name: true } }, createdBy: { select: { id: true, name: true, email: true } } },
-      });
+    /** One page of designs for the admin dashboard, newest first, optionally of one status. */
+    async listForAdmin({ status, take, skip = 0 }: { status?: DesignStatus; take: number; skip?: number }) {
+      const where = status ? { status } : {};
+      const [designs, total] = await Promise.all([
+        db.design.findMany({
+          where,
+          orderBy: { updatedAt: "desc" },
+          take,
+          skip,
+          include: { ...designDetails, organization: { select: { name: true } }, createdBy: { select: { id: true, name: true, email: true } } },
+        }),
+        db.design.count({ where }),
+      ]);
+      return { designs, total };
     },
 
     async decide(id: string, decision: "APPROVED" | "CHANGES_REQUESTED", comment: string | undefined, reviewerId: string, expectedVersionId?: string) {

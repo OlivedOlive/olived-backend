@@ -22,12 +22,23 @@ async function createAdmin() {
 
   const db = createDb(config.DATABASE_URL);
   try {
+    // Staff share one organization: reuse the one that already holds OLIVED staff.
+    const staff = await db.organization.findFirst({
+      where: { memberships: { some: { role: { in: ["OLIVED_ADMIN", "OLIVED_REVIEWER"] } } } },
+      orderBy: { createdAt: "asc" },
+      select: { id: true },
+    });
     await db.user.create({
       data: {
         email: email.data,
         name,
         passwordHash: await hashPassword(password),
-        memberships: { create: { role: "OLIVED_ADMIN", organization: { create: { name: "OLIVED" } } } },
+        memberships: {
+          create: {
+            role: "OLIVED_ADMIN",
+            organization: staff ? { connect: { id: staff.id } } : { create: { name: "OLIVED" } },
+          },
+        },
       },
     });
   } catch (error) {

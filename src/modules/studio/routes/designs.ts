@@ -3,7 +3,7 @@ import { z } from "zod";
 import { authOf, requireAdmin, requireAuth, requireReviewer } from "../auth/session.js";
 import type { Db } from "../db.js";
 import { designsFor, reviewQueue } from "../designs/repository.js";
-import { designContentSchema } from "../designs/validate.js";
+import { contextFor, designContentSchema, evaluateChecks, rulesSchema } from "../designs/validate.js";
 import { handlers } from "../jobs/handlers.js";
 import { runNextJob } from "../jobs/queue.js";
 import { HttpError } from "../errors.js";
@@ -23,6 +23,15 @@ const decisionSchema = z.object({
   decision: z.enum(["APPROVED", "CHANGES_REQUESTED"]),
   comment: z.string().trim().max(2000).optional(),
   versionId: z.string().min(1).optional(),
+});
+
+/** Paging for the admin lists. A page is at most 100 rows, so one request stays small. */
+const pageSchema = z.object({
+  take: z.coerce.number().int().min(1).max(100).default(20),
+  skip: z.coerce.number().int().min(0).default(0),
+});
+const adminDesignsSchema = pageSchema.extend({
+  status: z.enum(["DRAFT", "SUBMITTED", "CHANGES_REQUESTED", "APPROVED"]).optional(),
 });
 
 const adminDecisionSchema = decisionSchema.extend({
@@ -59,6 +68,15 @@ export function designRoutes(db: Db) {
     res.status(201).json({ version });
   });
 
+  /** Runs the market's checks on unsaved content, for the editor's live checklist. Changes nothing. */
+  router.post("/:id/check", async (req, res) => {
+    const { content } = versionSchema.parse(req.body);
+    const design = await designsFor(db, authOf(req).organization.id).find(req.params.id);
+    const ruleSet = design.market.ruleSets[0];
+    if (!ruleSet) throw new HttpError(409, "This market has no published rules.");
+    res.json({ results: evaluateChecks(content, rulesSchema.parse(ruleSet.rules), contextFor(design.template)) });
+  });
+
   router.post("/:id/submit", async (req, res) => {
     const { organization, user } = authOf(req);
     const design = await designsFor(db, organization.id).submit(req.params.id, user.id);
@@ -90,12 +108,15 @@ export function reviewRoutes(db: Db) {
 export function adminRoutes(db: Db) {
   const router = Router();
   router.use(requireAdmin);
-  router.get("/designs", async (_req, res) => {
-    res.json({ designs: await reviewQueue(db).listForAdmin() });
+  router.get("/designs", async (req, res) => {
+    res.json(await reviewQueue(db).listForAdmin(adminDesignsSchema.parse(req.query)));
   });
-  router.get("/users", async (_req, res) => {
-    const users = await db.user.findMany({
+  router.get("/users", async (req, res) => {
+    const { take, skip } = pageSchema.parse(req.query);
+    const [users, total] = await Promise.all([db.user.findMany({
       orderBy: { createdAt: "desc" },
+      take,
+      skip,
       select: {
         id: true, name: true, email: true, createdAt: true,
         memberships: { select: { role: true, organization: { select: { name: true } } } },
@@ -105,8 +126,8 @@ export function adminRoutes(db: Db) {
         },
         _count: { select: { designsCreated: true, versions: true, approvals: true } },
       },
-    });
-    res.json({ users });
+    }), db.user.count()]);
+    res.json({ users, total });
   });
   router.post("/users/:id/delete", async (req, res) => {
     const actor = authOf(req).user.id;

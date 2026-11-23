@@ -18,18 +18,33 @@ describe("passwords", () => {
 });
 
 describe("market checks", () => {
+  const sales = { saleLocation: "Tunis", salesChannel: "Retail" };
   const rules = { requiredFields: [{ key: "brandName", label: "Brand name" }] };
   const colors = { primary: "#000000", secondary: "#ffffff" };
 
   it("reports a missing or blank field", () => {
-    expect(checkDesign({ fields: {}, colors }, rules)).toHaveLength(1);
-    expect(checkDesign({ fields: { brandName: "   " }, colors }, rules)).toEqual([
+    // The market's field plus the two sales-destination fields.
+    expect(checkDesign({ fields: {}, colors }, rules)).toHaveLength(3);
+    expect(checkDesign({ fields: { brandName: "   ", ...sales }, colors }, rules)).toEqual([
       { field: "brandName", message: "Brand name is required for this market." },
     ]);
   });
 
   it("passes when every required field is filled", () => {
-    expect(checkDesign({ fields: { brandName: "Zeta" }, colors }, rules)).toEqual([]);
+    expect(checkDesign({ fields: { brandName: "Zeta", ...sales }, colors }, rules)).toEqual([]);
+  });
+
+  it("always asks where the product is sold, even when the fields are left out", () => {
+    expect(checkDesign({ fields: { brandName: "Zeta" }, colors }, rules).map((i) => i.field)).toEqual([
+      "saleLocation",
+      "salesChannel",
+    ]);
+  });
+
+  it("treats a [placeholder] value as missing, and names it", () => {
+    expect(checkDesign({ fields: { brandName: "[Your brand]", ...sales }, colors }, rules)).toEqual([
+      { field: "brandName", message: "Brand name: replace [Your brand]." },
+    ]);
   });
 });
 

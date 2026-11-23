@@ -48,6 +48,9 @@ const envSchema = z
       .default("")
       .refine((v) => v === "" || v.startsWith("mysql://"), "must start with mysql://"),
 
+    /** Where the studio keeps companies' uploaded logos and images. Keep it outside any public web root. */
+    STUDIO_FILES_DIR: z.string().default("data/studio-files"),
+
     /** Days a studio login lasts without being used. Using the studio renews it. */
     SESSION_DAYS: z.coerce.number().int().positive().default(30),
 
