@@ -4,6 +4,7 @@ import { allowedOrigins, type Config } from "../../config.js";
 import { loadAuth } from "./auth/session.js";
 import type { Db } from "./db.js";
 import { errorHandler, HttpError } from "./errors.js";
+import { assetRoutes } from "./routes/assets.js";
 import { authRoutes } from "./routes/auth.js";
 import { catalogRoutes } from "./routes/catalog.js";
 import { adminRoutes, designRoutes, reviewRoutes } from "./routes/designs.js";
@@ -31,7 +32,8 @@ function limitChangesPerUser(): RequestHandler {
     limit: 120,
     standardHeaders: "draft-8",
     legacyHeaders: false,
-    skip: (req) => req.method === "GET" || req.method === "HEAD" || !req.auth,
+    // The live checklist posts as the client types, but changes nothing.
+    skip: (req) => req.method === "GET" || req.method === "HEAD" || !req.auth || req.path.endsWith("/check"),
     keyGenerator: (req) => `user:${req.auth?.user.id}`,
     message: { error: "You are making changes too quickly. Please wait a minute." },
   });
@@ -50,6 +52,8 @@ export function studioRoutes(config: Config, db: Db) {
   });
 
   router.use(rejectOtherOrigins(allowedOrigins(config).map((o) => new URL(o).origin)));
+  // Images are uploaded as raw bytes, so they are routed before the JSON parser.
+  router.use("/assets", loadAuth(db, config), limitChangesPerUser(), assetRoutes(db, config));
   router.use(express.json({ limit: "200kb" }));
   router.use(loadAuth(db, config));
   router.use(limitChangesPerUser());

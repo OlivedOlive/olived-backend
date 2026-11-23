@@ -1,4 +1,6 @@
 // Runs against a real MySQL database, which it EMPTIES. Set TEST_DATABASE_URL to enable it.
+import { tmpdir } from "node:os";
+import path from "node:path";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createApp } from "../../src/app.js";
@@ -12,6 +14,8 @@ const url = process.env.TEST_DATABASE_URL;
 const silent = { info() {}, warn() {}, error() {} };
 const ORIGIN = "http://localhost:3100";
 const colors = { primary: "#1c1a16", secondary: "#b08d57" };
+/** The sales destination every design must name. */
+const sales = { saleLocation: "Tunis", salesChannel: "Retail" };
 
 describe.skipIf(!url)("API with MySQL", () => {
   let db: Db;
@@ -32,11 +36,17 @@ describe.skipIf(!url)("API with MySQL", () => {
   }
 
   const newDesign = (agent: ReturnType<typeof client>, fields: Record<string, string> = {}) =>
-    agent.post("/api/studio/designs").send({ name: "Spring", templateId, marketId, content: { fields, colors } }).expect(201);
+    agent
+      .post("/api/studio/designs")
+      .send({ name: "Spring", templateId, marketId, content: { fields: { ...sales, ...fields }, colors } })
+      .expect(201);
 
   beforeAll(async () => {
     if (!new URL(url!).pathname.includes("test")) throw new Error("TEST_DATABASE_URL must name a test database");
-    config = loadConfig({ DATABASE_URL: url, FRONTEND_ORIGIN: ORIGIN, AUTH_RATE_LIMIT_MAX: "1000" });
+    config = loadConfig({
+      DATABASE_URL: url, FRONTEND_ORIGIN: ORIGIN, AUTH_RATE_LIMIT_MAX: "1000",
+      STUDIO_FILES_DIR: path.join(tmpdir(), "olived-studio-test-files"),
+    });
     db = createDb(url!);
     app = createApp({ config, db, store: { save: async () => {} }, mailer: { sendEnquiry: async () => false }, log: silent });
 
@@ -220,7 +230,7 @@ describe.skipIf(!url)("API with MySQL", () => {
 
     const saved = await agent
       .post(`/api/studio/designs/${id}/versions`)
-      .send({ content: { fields: { brandName: "Zeta" }, colors } })
+      .send({ content: { fields: { brandName: "Zeta", ...sales }, colors } })
       .expect(201);
     expect(saved.body.version.number).toBe(2);
 
@@ -317,6 +327,65 @@ describe.skipIf(!url)("API with MySQL", () => {
     const { design } = (await buyer.get(`/api/studio/designs/${id}`).expect(200)).body;
     expect(design.status).toBe("APPROVED");
     expect(design.versions[0].approvals).toEqual([{ decision: "APPROVED", comment: "Ready for production review." }]);
+  });
+
+  it("pages the admin lists and filters designs by status", async () => {
+    const admin = client();
+    await admin.post("/api/studio/auth/login")
+      .send({ email: "dashboard-admin@example.com", password: "long enough password" }).expect(200);
+
+    const all = (await admin.get("/api/studio/admin/designs").expect(200)).body;
+    expect(all.total).toBeGreaterThan(1);
+    const first = (await admin.get("/api/studio/admin/designs?take=1").expect(200)).body;
+    expect(first.designs).toHaveLength(1);
+    expect(first.total).toBe(all.total);
+    const second = (await admin.get("/api/studio/admin/designs?take=1&skip=1").expect(200)).body;
+    expect(second.designs[0].id).not.toBe(first.designs[0].id);
+
+    const approved = (await admin.get("/api/studio/admin/designs?status=APPROVED").expect(200)).body;
+    expect(approved.designs.length).toBeGreaterThan(0);
+    expect(approved.designs.every((d: { status: string }) => d.status === "APPROVED")).toBe(true);
+
+    await admin.get("/api/studio/admin/designs?status=LOST").expect(400);
+    await admin.get("/api/studio/admin/designs?take=500").expect(400);
+
+    const users = (await admin.get("/api/studio/admin/users?take=2").expect(200)).body;
+    expect(users.users).toHaveLength(2);
+    expect(users.total).toBeGreaterThan(2);
+  });
+
+  it("keeps each company's logo library private, and refuses unsafe files", async () => {
+    // A 1 x 1 transparent PNG.
+    const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
+    const owner = await signUp("logo-owner@example.com");
+    const other = await signUp("logo-other@example.com");
+    const upload = (agent: ReturnType<typeof client>, type: string, body: Buffer, name = "Logo%20%C3%A9t%C3%A9.png") =>
+      agent.post("/api/studio/assets").set("Content-Type", type).set("X-File-Name", name).send(body);
+
+    const created = await upload(owner, "image/png", png).expect(201);
+    expect(created.body.asset).toMatchObject({ name: "Logo été.png", mimeType: "image/png", sizeBytes: png.length });
+    const { url, id } = created.body.asset;
+    expect((await owner.get("/api/studio/assets").expect(200)).body.assets.map((a: { id: string }) => a.id)).toEqual([id]);
+    const file = await owner.get(url).expect(200);
+    expect(file.headers["content-type"]).toBe("image/png");
+    expect(file.headers["content-security-policy"]).toContain("sandbox");
+
+    // Another company can neither list, read nor delete it.
+    expect((await other.get("/api/studio/assets").expect(200)).body.assets).toEqual([]);
+    await other.get(url).expect(404);
+    await other.post(`${url}/delete`).expect(404);
+
+    await upload(owner, "image/png", Buffer.from("not really a png")).expect(400);
+    await upload(owner, "text/html", Buffer.from("<html>")).expect(400);
+    const script = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>');
+    expect((await upload(owner, "image/svg+xml", script).expect(400)).body.error).toMatch(/scripts/);
+    const handler = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"><rect width="1" height="1"/></svg>');
+    await upload(owner, "image/svg+xml", handler).expect(400);
+    const plain = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" fill="#073b2f"/></svg>');
+    await upload(owner, "image/svg+xml", plain, "mark.svg").expect(201);
+
+    await owner.post(`${url}/delete`).expect(200);
+    await owner.get(url).expect(404);
   });
 
   it("retries a failing job and gives up after the last attempt", async () => {

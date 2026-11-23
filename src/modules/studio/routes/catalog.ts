@@ -21,14 +21,25 @@ export function catalogRoutes(db: Db) {
     res.json({ products });
   });
 
-  /** Only markets a client can design for: active, with published rules. */
+  /**
+   * Only markets a client can design for: active, with published rules. Each comes with its label
+   * template text, so a new design starts with that market's legal wording.
+   */
   router.get("/markets", async (_req, res) => {
     const markets = await db.market.findMany({
       where: { active: true, ruleSets: { some: { status: "PUBLISHED" } } },
       orderBy: { name: "asc" },
-      select: { id: true, code: true, name: true, languages: true },
+      select: {
+        id: true, code: true, name: true, languages: true,
+        ruleSets: { where: { status: "PUBLISHED" }, orderBy: { version: "desc" }, take: 1, select: { rules: true } },
+      },
     });
-    res.json({ markets });
+    res.json({
+      markets: markets.map(({ ruleSets, ...market }) => {
+        const rules = (ruleSets[0]?.rules ?? {}) as { copy?: Record<string, string>; draft?: boolean };
+        return { ...market, copy: rules.copy ?? {}, draft: rules.draft ?? false };
+      }),
+    });
   });
 
   return router;
