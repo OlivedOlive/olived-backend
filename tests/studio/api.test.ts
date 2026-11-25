@@ -290,6 +290,53 @@ describe.skipIf(!url)("API with MySQL", () => {
     expect(saved.status).toBe(201);
   });
 
+  it("gives admins the dashboard overview and the organisations list, and nobody else", async () => {
+    const buyer = await signUp("overview-buyer@example.com");
+    await request(app).get("/api/studio/admin/overview").expect(401);
+    await buyer.get("/api/studio/admin/overview").expect(403);
+    await buyer.get("/api/studio/admin/organizations").expect(403);
+
+    await db.user.create({
+      data: {
+        email: "overview-admin@example.com",
+        name: "Overview Admin",
+        passwordHash: await hashPassword("long enough password"),
+        memberships: { create: { role: "OLIVED_ADMIN", organization: { create: { name: "OLIVED" } } } },
+      },
+    });
+    const admin = client();
+    await admin.post("/api/studio/auth/login")
+      .send({ email: "overview-admin@example.com", password: "long enough password" }).expect(200);
+
+    const overview = (await admin.get("/api/studio/admin/overview").expect(200)).body;
+    expect(overview.users.total).toBeGreaterThanOrEqual(2);
+    expect(overview.users.staff).toBeGreaterThanOrEqual(1);
+    expect(Object.keys(overview.designs.byStatus)).toEqual(["DRAFT", "SUBMITTED", "CHANGES_REQUESTED", "APPROVED"]);
+    expect(overview.system.jobs).toHaveProperty("FAILED");
+    expect(typeof overview.system.databaseMs).toBe("number");
+    expect(Array.isArray(overview.system.markets)).toBe(true);
+    expect(overview.system.markets.every((m: { ruleVersion: unknown; rules?: unknown }) => !("rules" in m))).toBe(true);
+
+    const found = (await admin.get("/api/studio/admin/organizations?q=overview-buyer").expect(200)).body;
+    expect(found.total).toBe(1);
+    expect(found.organizations[0]).toMatchObject({
+      name: "Company overview-buyer@example.com",
+      _count: { memberships: 1, designs: 0, brandAssets: 0 },
+      designStatus: { DRAFT: 0, SUBMITTED: 0, CHANGES_REQUESTED: 0, APPROVED: 0 },
+    });
+    expect(found.organizations[0].memberships[0].user.email).toBe("overview-buyer@example.com");
+    await admin.get("/api/studio/admin/organizations?take=500").expect(400);
+
+    // The design list filters by text, market and sort order.
+    const none = (await admin.get("/api/studio/admin/designs?q=no-such-design-anywhere").expect(200)).body;
+    expect(none.total).toBe(0);
+    const byBuyer = (await admin.get("/api/studio/admin/designs?q=overview-buyer&sort=name").expect(200)).body;
+    expect(byBuyer.designs.every((d: { organization: { name: string } }) => d.organization.name.includes("overview-buyer"))).toBe(true);
+    await admin.get("/api/studio/admin/designs?market=de&sort=oldest").expect(200);
+    await admin.get("/api/studio/admin/designs?sort=sideways").expect(400);
+    await admin.get("/api/studio/admin/designs?market=not%20a%20code").expect(400);
+  });
+
   it("restricts the admin dashboard and records decisions for the checked version", async () => {
     const buyer = await signUp("admin-flow-buyer@example.com");
     const { body } = await newDesign(buyer, { brandName: "Zeta" });

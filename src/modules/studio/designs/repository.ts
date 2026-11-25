@@ -130,12 +130,29 @@ export function reviewQueue(db: Db) {
     },
 
     /** One page of designs for the admin dashboard, newest first, optionally of one status. */
-    async listForAdmin({ status, take, skip = 0 }: { status?: DesignStatus; take: number; skip?: number }) {
-      const where = status ? { status } : {};
+    async listForAdmin({ status, take, skip = 0, q, market, sort = "recent" }: {
+      status?: DesignStatus; take: number; skip?: number;
+      /** Part of the design name, the company name, or the creator's name or email. */
+      q?: string;
+      /** Market code, for example DE. */
+      market?: string;
+      sort?: "recent" | "oldest" | "name";
+    }) {
+      const where = {
+        ...(status ? { status } : {}),
+        ...(market ? { market: { code: market } } : {}),
+        ...(q ? { OR: [
+          { name: { contains: q } },
+          { organization: { name: { contains: q } } },
+          { createdBy: { name: { contains: q } } },
+          { createdBy: { email: { contains: q } } },
+        ] } : {}),
+      };
+      const orderBy = sort === "name" ? { name: "asc" as const } : { updatedAt: sort === "oldest" ? "asc" as const : "desc" as const };
       const [designs, total] = await Promise.all([
         db.design.findMany({
           where,
-          orderBy: { updatedAt: "desc" },
+          orderBy,
           take,
           skip,
           include: { ...designDetails, organization: { select: { name: true } }, createdBy: { select: { id: true, name: true, email: true } } },
