@@ -6,6 +6,7 @@ import { designsFor, reviewQueue } from "../designs/repository.js";
 import { contextFor, designContentSchema, evaluateChecks, rulesSchema } from "../designs/validate.js";
 import { handlers } from "../jobs/handlers.js";
 import { runNextJob } from "../jobs/queue.js";
+import { addAdminOverviewRoutes } from "./admin-overview.js";
 import { HttpError } from "../errors.js";
 import { Prisma } from "../../../generated/prisma/client.js";
 import { logger } from "../../../shared/logger.js";
@@ -32,6 +33,9 @@ const pageSchema = z.object({
 });
 const adminDesignsSchema = pageSchema.extend({
   status: z.enum(["DRAFT", "SUBMITTED", "CHANGES_REQUESTED", "APPROVED"]).optional(),
+  q: z.string().trim().max(160).optional().transform((v) => v || undefined),
+  market: z.string().trim().toUpperCase().regex(/^[A-Z]{2,8}$/).optional(),
+  sort: z.enum(["recent", "oldest", "name"]).optional(),
 });
 
 const adminDecisionSchema = decisionSchema.extend({
@@ -108,6 +112,7 @@ export function reviewRoutes(db: Db) {
 export function adminRoutes(db: Db) {
   const router = Router();
   router.use(requireAdmin);
+  addAdminOverviewRoutes(router, db);
   router.get("/designs", async (req, res) => {
     res.json(await reviewQueue(db).listForAdmin(adminDesignsSchema.parse(req.query)));
   });
