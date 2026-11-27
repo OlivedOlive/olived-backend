@@ -161,8 +161,12 @@ export type CheckResult = {
   status: "pass" | "error" | "warning" | "unverified";
   message: string;
   field?: string;
-  /** "notPlaced": the field has its text but no block on the label, so the Studio can offer to add it back. */
-  code?: "notPlaced";
+  /**
+   * "notPlaced": the field has its text but no block on the label, so the Studio can offer to add it back.
+   * "textSize": some blocks are too small; `sizes` gives the point size each needs in its typeface.
+   */
+  code?: "notPlaced" | "textSize";
+  sizes?: Record<string, number>;
 };
 
 /**
@@ -215,6 +219,11 @@ const SCRIPTS = {
 } as const;
 
 /** True when the last digit of a GTIN is its GS1 check digit. */
+/** Arabic-Indic and Persian digits as 0-9, so a number typed on an Arabic keyboard is read too. */
+export const westernDigits = (text: string) => text
+  .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+  .replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x06F0));
+
 export function validGtin(digits: string) {
   if (!/^(\d{8}|\d{12}|\d{13}|\d{14})$/.test(digits)) return false;
   const body = digits.slice(0, -1).split("").reverse();
@@ -358,7 +367,7 @@ export function evaluateChecks(content: DesignContent, rules: Rules, context: Ch
         break;
       case "gtin": {
         // Only a number the client typed is checked; an empty field or placeholder is the barcode check's job.
-        const number = value(check.field).replace(/[\s-]/g, "").match(/\d{8,14}/)?.[0];
+        const number = westernDigits(value(check.field)).replace(/\[[^\]]*\]/g, " ").replace(/[\s.-]/g, "").match(/\d{8,14}/)?.[0];
         if (!number) {
           results.push(pass(check.field));
         } else if (!validGtin(number)) {
@@ -396,12 +405,16 @@ export function evaluateChecks(content: DesignContent, rules: Rules, context: Ch
         if (arranged) {
           // Point sizes are absolute, so the height is known even before the supplier confirms the label size.
           const mandatory = new Set(checks.filter((c) => c.kind === "required").map((c) => (c as { field: string }).field));
-          const small = elements.filter((e) => e.type === "field" && e.field && mandatory.has(e.field)
+          // The barcode block draws bars and digits sized with the symbol, not by its font size.
+          const small = elements.filter((e) => e.type === "field" && e.field && e.field !== "barcode" && mandatory.has(e.field)
             && (e.size ?? 8) * PT_TO_MM * xHeight(e.font) < check.mm);
+          // The size each block needs in its own typeface, rounded up to half a point.
+          const needed = (font: string | undefined) => Math.ceil((check.mm / PT_TO_MM / xHeight(font)) * 2) / 2;
+          const sizes = Object.fromEntries(small.map((e) => [e.field!, needed(e.font)]));
           // Name the blocks and the size they need, then the rule itself.
           results.push(small.length === 0 ? pass() : {
-            label: check.label, status: check.severity ?? "error", field: small[0]!.field,
-            message: `Too small: ${small.map((e) => labelOf(e.field!)).join(", ")}. Use at least ${Math.ceil(check.mm / PT_TO_MM / xHeight(small[0]!.font))} pt in this typeface. ${check.message ?? ""}`.trim(),
+            label: check.label, status: check.severity ?? "error", field: small[0]!.field, code: "textSize", sizes,
+            message: `Too small: ${small.map((e) => labelOf(e.field!)).join(", ")}. Use at least ${Math.max(...Object.values(sizes))} pt in this typeface. ${check.message ?? ""}`.trim(),
           });
           break;
         }

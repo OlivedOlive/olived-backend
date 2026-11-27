@@ -2,9 +2,18 @@ import nodemailer from "nodemailer";
 import type { Config } from "../../config.js";
 import type { StoredEnquiry } from "./storage.js";
 
+/** An email to the OLIVED inbox (MAIL_TO), for example a design sent for review. */
+export type OlivedEmail = {
+  subject: string; text: string; html: string; replyTo?: { name: string; address: string };
+  /** Another recipient than MAIL_TO, for example a user's own address for a password code. */
+  to?: string;
+};
+
 export interface Mailer {
   /** Returns true when the email was handed to the SMTP server. */
   sendEnquiry(enquiry: StoredEnquiry): Promise<boolean>;
+  /** Sends an email to MAIL_TO, or to `to`. Returns true when it was handed to the SMTP server. */
+  send?(email: OlivedEmail): Promise<boolean>;
 }
 
 const SOURCE_LABEL: Record<StoredEnquiry["source"], string> = {
@@ -90,7 +99,13 @@ export function createMailer(config: Config, log: Pick<Console, "warn" | "error"
     log.warn(
       "[mailer] SMTP_HOST is not set in .env — enquiries are saved to data/enquiries.jsonl but NOT emailed.",
     );
-    return { sendEnquiry: async () => false };
+    return {
+      sendEnquiry: async () => false,
+      send: async (email) => {
+        log.warn(`[mailer] Not emailed (SMTP_HOST is not set): "${email.subject}"`);
+        return false;
+      },
+    };
   }
 
   if (config.SMTP_USER && !config.SMTP_PASS) {
@@ -146,6 +161,24 @@ export function createMailer(config: Config, log: Pick<Console, "warn" | "error"
         return true;
       } catch (err) {
         log.error("[mailer] Failed to send enquiry email:", err);
+        return false;
+      }
+    },
+    async send(email) {
+      const to = email.to ?? config.MAIL_TO;
+      try {
+        const info = await transport.sendMail({ from, to, replyTo: email.replyTo, subject: email.subject, text: email.text, html: email.html });
+        // What the mail server answered, so the terminal shows whether the email really left.
+        const refused = (info.rejected ?? []).map(String);
+        if (refused.length) {
+          log.error(`[mailer] ✉ REFUSED by ${config.SMTP_HOST} for ${refused.join(", ")}: "${email.subject}" (${info.response})`);
+          return false;
+        }
+        log.warn(`[mailer] ✉ Sent to ${to}: "${email.subject}" · ${config.SMTP_HOST} answered: ${info.response} · id ${info.messageId}`);
+        return true;
+      } catch (err) {
+        const reason = err instanceof Error ? err.message.split(/\r?\n/)[0] : String(err);
+        log.error(`[mailer] ✉ FAILED to send to ${to}: "${email.subject}" · ${reason}`);
         return false;
       }
     },

@@ -144,6 +144,12 @@ describe("barcodes", () => {
     expect(validGtin("619123")).toBe(false);
   });
 
+  it("reads a barcode typed in Arabic digits, with dots, or next to the placeholder", () => {
+    expect(status("SA", "٦١٩١٢٣٤٥٦٧٨٩٧", true)).toMatchObject({ status: "pass" });
+    expect(status("FR", "619.1234.56789.7", true)).toMatchObject({ status: "pass" });
+    expect(status("FR", "[GTIN barcode: one per reference] 6191234567890", true)).toMatchObject({ status: "error" });
+  });
+
   it("refuses a barcode with a wrong check digit", () => {
     expect(status("FR", "6191234567890", true)).toMatchObject({ status: "error" });
     expect(errors("FR", finished("FR", { barcode: "619 1234 56789 0" })).map((i) => i.label)).toEqual(["Barcode number"]);
@@ -218,6 +224,20 @@ describe("a client's own layout", () => {
     ]);
     // The Studio offers to put it back from this code.
     expect(errors[0]).toMatchObject({ field: "importer", code: "notPlaced" });
+  });
+
+  it("gives the size each too-small block needs, leaving the barcode to its symbol", () => {
+    const content = arranged("US", (elements) => {
+      for (const e of elements) e.size = 6;
+      elements.push(field("barcode", 5, { size: 4 }));
+    });
+    content.fields.barcode = "036000291452";
+    const result = evaluateChecks(content, rules("US"), context).find((r) => r.code === "textSize")!;
+    expect(result.status).toBe("error");
+    // 1.6 mm letters in Roboto Condensed (x-height 0.52) need 8.7 pt, rounded up to 9.
+    expect(result.sizes?.lot).toBe(9);
+    expect(result.sizes).not.toHaveProperty("barcode");
+    expect(result.message).toContain("at least 9 pt");
   });
 
   it("checks the panel each element actually sits on", () => {

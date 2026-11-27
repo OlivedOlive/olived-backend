@@ -50,6 +50,9 @@ model User {
   versions       DesignVersion[]
   approvals      Approval[]
   auditLogs      AuditLog[]
+  notifications  Notification[]
+  messages       DesignMessage[]
+  passwordResets PasswordReset[]
 
   @@map("users")
 }
@@ -289,12 +292,14 @@ model Design {
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
-  organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Restrict)
-  createdBy    User              @relation(fields: [createdById], references: [id], onDelete: Restrict)
-  template     PackagingTemplate @relation(fields: [templateId], references: [id], onDelete: Restrict)
-  market       Market            @relation(fields: [marketId], references: [id], onDelete: Restrict)
-  importer     Importer?         @relation(fields: [importerId], references: [id], onDelete: SetNull)
-  versions     DesignVersion[]
+  organization  Organization      @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  createdBy     User              @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  template      PackagingTemplate @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  market        Market            @relation(fields: [marketId], references: [id], onDelete: Restrict)
+  importer      Importer?         @relation(fields: [importerId], references: [id], onDelete: SetNull)
+  versions      DesignVersion[]
+  messages      DesignMessage[]
+  notifications Notification[]
 
   @@index([organizationId, updatedAt])
   @@index([templateId])
@@ -418,4 +423,61 @@ model Job {
 
   @@index([status, runAt])
   @@map("jobs")
+}
+
+/// Something a user should know about: a design to review, a decision, a new message. One row per recipient.
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  designId  String?
+  /// design.submitted, design.approved, design.changes or design.message
+  type      String    @db.VarChar(40)
+  title     String    @db.VarChar(200)
+  body      String?   @db.Text
+  /// Studio page to open, for example /studio/designs/abc
+  link      String?   @db.VarChar(300)
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  design Design? @relation(fields: [designId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt, createdAt])
+  @@index([designId])
+  @@map("notifications")
+}
+
+/// The conversation about one design, between the client and the OLIVED team.
+model DesignMessage {
+  id         String   @id @default(cuid())
+  designId   String
+  authorId   String?
+  /// Kept so a message still shows who wrote it after the account is removed.
+  authorName String   @db.VarChar(120)
+  fromStaff  Boolean  @default(false)
+  body       String   @db.Text
+  createdAt  DateTime @default(now())
+
+  design Design @relation(fields: [designId], references: [id], onDelete: Cascade)
+  author User?  @relation(fields: [authorId], references: [id], onDelete: SetNull)
+
+  @@index([designId, createdAt])
+  @@index([authorId])
+  @@map("design_messages")
+}
+
+/// A code sent by email to set a new password. Only a hash of the code is kept.
+model PasswordReset {
+  id        String   @id @default(cuid())
+  userId    String
+  codeHash  String   @db.VarChar(255)
+  expiresAt DateTime
+  /// Wrong codes tried; the reset is dropped after a few.
+  attempts  Int      @default(0)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("password_resets")
 }
