@@ -46,7 +46,12 @@ export function designsFor(db: Db, organizationId: string) {
       db.design.findMany({
         where: { organizationId },
         orderBy: { updatedAt: "desc" },
-        include: { market: true, template: { include: { variant: { include: { product: true } } } } },
+        include: {
+          market: true,
+          template: { include: { variant: { include: { product: true } } } },
+          // The latest content draws the label picture on each project card.
+          versions: { orderBy: { number: "desc" }, take: 1, select: { number: true, content: true, createdAt: true } },
+        },
       }),
 
     find,
@@ -160,6 +165,16 @@ export function reviewQueue(db: Db) {
         db.design.count({ where }),
       ]);
       return { designs, total };
+    },
+
+    /** One design for the admin's detail page, from any organisation. */
+    async findForAdmin(id: string) {
+      const design = await db.design.findUnique({
+        where: { id },
+        include: { ...designDetails, organization: { select: { name: true } }, createdBy: { select: { id: true, name: true, email: true } } },
+      });
+      if (!design) throw new HttpError(404, "Design not found.");
+      return design;
     },
 
     async decide(id: string, decision: "APPROVED" | "CHANGES_REQUESTED", comment: string | undefined, reviewerId: string, expectedVersionId?: string) {

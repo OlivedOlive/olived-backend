@@ -56,6 +56,9 @@ const element = z.object({
   shape: z.enum(["rect", "ellipse", "line"]).optional(),
   // Images.
   src: imageSource.optional(),
+  // Barcodes (the barcode field holding a GTIN): bar height in millimetres, and how the digits are set.
+  barHeight: z.number().min(2).max(60).optional(),
+  barcodeStyle: z.enum(["gs1", "simple"]).optional(),
 });
 
 const layout = z.object({
@@ -158,6 +161,8 @@ export type CheckResult = {
   status: "pass" | "error" | "warning" | "unverified";
   message: string;
   field?: string;
+  /** "notPlaced": the field has its text but no block on the label, so the Studio can offer to add it back. */
+  code?: "notPlaced";
 };
 
 /**
@@ -297,8 +302,8 @@ export function evaluateChecks(content: DesignContent, rules: Rules, context: Ch
         if (!filled(check.field)) {
           results.push(fail(placeholder ? `${check.label}: replace ${placeholder}.` : `${check.label} is required for this market.`, check.field));
         } else if (arranged && !placed(check.field) && check.field !== "destinationCountry") {
-          results.push({ label: check.label, status: check.severity ?? "error", field: check.field,
-            message: `${check.label} is filled in but not placed on the label. Add it from the fields list.` });
+          results.push({ label: check.label, status: check.severity ?? "error", field: check.field, code: "notPlaced",
+            message: `${check.label} is filled in but not on the label. Add it back to the label.` });
         } else {
           results.push(pass(check.field));
         }

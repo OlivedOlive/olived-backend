@@ -165,6 +165,9 @@ export function adminRoutes(db: Db) {
     }
     res.json({ success: true });
   });
+  router.get("/designs/:id", async (req, res) => {
+    res.json({ design: await reviewQueue(db).findForAdmin(req.params.id) });
+  });
   router.post("/designs/:id/delete", async (req, res) => {
     const actor = authOf(req).user.id;
     await db.$transaction(async (tx) => {

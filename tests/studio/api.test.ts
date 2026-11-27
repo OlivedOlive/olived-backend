@@ -208,6 +208,12 @@ describe.skipIf(!url)("API with MySQL", () => {
     await other.post(`/api/studio/designs/${id}/versions`).send({ content }).expect(404);
     await other.post(`/api/studio/designs/${id}/submit`).expect(404);
     expect((await other.get("/api/studio/designs").expect(200)).body.designs).toEqual([]);
+
+    // The owner's list carries the latest content, for the label picture on each card.
+    const mine = (await owner.get("/api/studio/designs").expect(200)).body.designs;
+    expect(mine).toHaveLength(1);
+    expect(mine[0].versions).toHaveLength(1);
+    expect(mine[0].versions[0].content.colors).toEqual(colors);
   });
 
   it("sends a design back when it fails the market checks", async () => {
@@ -335,6 +341,14 @@ describe.skipIf(!url)("API with MySQL", () => {
     await admin.get("/api/studio/admin/designs?market=de&sort=oldest").expect(200);
     await admin.get("/api/studio/admin/designs?sort=sideways").expect(400);
     await admin.get("/api/studio/admin/designs?market=not%20a%20code").expect(400);
+
+    // One design, from any organisation, for the admin's detail page.
+    const { body: created } = await newDesign(buyer);
+    const one = (await admin.get(`/api/studio/admin/designs/${created.design.id}`).expect(200)).body.design;
+    expect(one).toMatchObject({ id: created.design.id, organization: { name: "Company overview-buyer@example.com" } });
+    expect(one.versions).toHaveLength(1);
+    await admin.get("/api/studio/admin/designs/no-such-design").expect(404);
+    await buyer.get(`/api/studio/admin/designs/${created.design.id}`).expect(403);
   });
 
   it("restricts the admin dashboard and records decisions for the checked version", async () => {

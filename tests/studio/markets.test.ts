@@ -212,9 +212,12 @@ describe("a client's own layout", () => {
 
   it("needs every filled-in field on the label", () => {
     const content = arranged("FR", (elements) => elements.splice(elements.findIndex((e) => e.field === "importer"), 1));
-    expect(errorsOf("FR", content).map((r) => r.message)).toEqual([
-      "Importer name and address is filled in but not placed on the label. Add it from the fields list.",
+    const errors = errorsOf("FR", content);
+    expect(errors.map((r) => r.message)).toEqual([
+      "Importer name and address is filled in but not on the label. Add it back to the label.",
     ]);
+    // The Studio offers to put it back from this code.
+    expect(errors[0]).toMatchObject({ field: "importer", code: "notPlaced" });
   });
 
   it("checks the panel each element actually sits on", () => {
