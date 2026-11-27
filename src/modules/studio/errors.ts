@@ -7,6 +7,8 @@ export class HttpError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    /** Messages for single form fields, shown under each field. */
+    readonly fields?: Record<string, string>,
   ) {
     super(message);
   }
@@ -22,7 +24,7 @@ export const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
     return;
   }
   if (err instanceof HttpError) {
-    res.status(err.status).json({ error: err.message });
+    res.status(err.status).json(err.fields ? { error: err.message, fields: err.fields } : { error: err.message });
     return;
   }
   // Errors raised by body parsing, such as invalid JSON or a body that is too large.

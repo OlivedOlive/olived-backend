@@ -43,7 +43,7 @@ export function createApp({ config, store, mailer, db, log = logger }: AppDeps) 
   });
 
   app.use("/api/enquiries", enquiryRoutes({ config, store, mailer, log }));
-  app.use("/api/studio", db ? studioRoutes(config, db) : studioOff);
+  app.use("/api/studio", db ? studioRoutes(config, db, mailer) : studioOff);
 
   app.use((_req, res) => {
     res.status(404).json({ success: false, error: "Not found" });

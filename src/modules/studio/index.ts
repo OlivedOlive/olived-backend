@@ -8,6 +8,8 @@ import { assetRoutes } from "./routes/assets.js";
 import { authRoutes } from "./routes/auth.js";
 import { catalogRoutes } from "./routes/catalog.js";
 import { adminRoutes, designRoutes, reviewRoutes } from "./routes/designs.js";
+import { notificationRoutes } from "./routes/notifications.js";
+import type { Mailer } from "../enquiries/mailer.js";
 
 /**
  * Second layer against cross-site requests (CSRF), on top of the SameSite cookie: a change must
@@ -43,7 +45,7 @@ function limitChangesPerUser(): RequestHandler {
  * OLIVED Studio: accounts, catalog, packaging designs and review. Mounted at /api/studio.
  * The website forwards its /api/studio/* requests here, so the login cookie stays on the site's own domain.
  */
-export function studioRoutes(config: Config, db: Db) {
+export function studioRoutes(config: Config, db: Db, mailer?: Mailer) {
   const router = Router();
 
   router.get("/health", async (_req, res) => {
@@ -58,9 +60,10 @@ export function studioRoutes(config: Config, db: Db) {
   router.use(loadAuth(db, config));
   router.use(limitChangesPerUser());
 
-  router.use("/auth", authRoutes(db, config));
+  router.use("/auth", authRoutes(db, config, mailer));
   router.use("/catalog", catalogRoutes(db));
-  router.use("/designs", designRoutes(db));
+  router.use("/designs", designRoutes(db, config, mailer));
+  router.use("/notifications", notificationRoutes(db));
   router.use("/review", reviewRoutes(db));
   router.use("/admin", adminRoutes(db));
 

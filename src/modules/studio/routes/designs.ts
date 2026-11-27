@@ -7,6 +7,10 @@ import { contextFor, designContentSchema, evaluateChecks, rulesSchema } from "..
 import { handlers } from "../jobs/handlers.js";
 import { runNextJob } from "../jobs/queue.js";
 import { addAdminOverviewRoutes } from "./admin-overview.js";
+import { listMessages, messageSchema, postMessage } from "./notifications.js";
+import { onDecision, onDesignSubmitted } from "../notifications.js";
+import type { Config } from "../../../config.js";
+import type { Mailer } from "../../enquiries/mailer.js";
 import { HttpError } from "../errors.js";
 import { Prisma } from "../../../generated/prisma/client.js";
 import { logger } from "../../../shared/logger.js";
@@ -45,7 +49,7 @@ const adminDecisionSchema = decisionSchema.extend({
   { path: ["comment"], message: "Explain the changes the client needs to make." },
 );
 
-export function designRoutes(db: Db) {
+export function designRoutes(db: Db, config?: Config, mailer?: Mailer) {
   const router = Router();
   router.use(requireAuth);
 
@@ -85,10 +89,39 @@ export function designRoutes(db: Db) {
     const { organization, user } = authOf(req);
     const design = await designsFor(db, organization.id).submit(req.params.id, user.id);
     logger.info(`[studio] Design submitted for review: ${req.params.id} by ${user.email}`);
+    // The OLIVED team hears about it in the Studio and by email; neither can fail the submission.
+    if (config) await onDesignSubmitted(db, mailer, config, design.id, { id: user.id, name: user.name, email: user.email });
     res.json({ design });
   });
 
+  /** The conversation with the OLIVED team about one of the company's designs. */
+  router.get("/:id/messages", async (req, res) => {
+    const design = await designsFor(db, authOf(req).organization.id).find(req.params.id);
+    res.json({ messages: await listMessages(db, design.id) });
+  });
+
+  router.post("/:id/messages", async (req, res) => {
+    const { organization, user } = authOf(req);
+    const design = await designsFor(db, organization.id).find(req.params.id);
+    const { body } = messageSchema.parse(req.body);
+    res.status(201).json({ message: await postMessage(db, design.id, { id: user.id, name: user.name }, false, body) });
+  });
+
   return router;
+}
+
+/** The OLIVED side of a design's conversation, for reviewers and admins. */
+function addStaffMessageRoutes(router: Router) {
+  return (db: Db) => {
+    router.get("/designs/:id/messages", async (req, res) => {
+      res.json({ messages: await listMessages(db, req.params.id) });
+    });
+    router.post("/designs/:id/messages", async (req, res) => {
+      const { user } = authOf(req);
+      const { body } = messageSchema.parse(req.body);
+      res.status(201).json({ message: await postMessage(db, req.params.id, { id: user.id, name: user.name }, true, body) });
+    });
+  };
 }
 
 export function reviewRoutes(db: Db) {
@@ -103,8 +136,10 @@ export function reviewRoutes(db: Db) {
     const { decision, comment, versionId } = decisionSchema.parse(req.body);
     await reviewQueue(db).decide(req.params.id, decision, comment, authOf(req).user.id, versionId);
     logger.info(`[studio] Review: ${req.params.id} ${decision} by ${authOf(req).user.email}`);
+    await onDecision(db, req.params.id, decision, comment, authOf(req).user.id);
     res.json({ success: true });
   });
+  addStaffMessageRoutes(router)(db);
 
   return router;
 }
@@ -198,7 +233,9 @@ export function adminRoutes(db: Db) {
     const { user } = authOf(req);
     await reviewQueue(db).decide(req.params.id, decision, comment, user.id, versionId);
     logger.info(`[studio] Admin review: ${req.params.id} ${decision} by ${user.email}`);
+    await onDecision(db, req.params.id, decision, comment, user.id);
     res.json({ success: true });
   });
+  addStaffMessageRoutes(router)(db);
   return router;
 }

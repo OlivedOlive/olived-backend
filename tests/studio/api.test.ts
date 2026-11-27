@@ -16,6 +16,8 @@ const ORIGIN = "http://localhost:3100";
 const colors = { primary: "#1c1a16", secondary: "#b08d57" };
 /** The sales destination every design must name. */
 const sales = { saleLocation: "Tunis", salesChannel: "Retail" };
+/** Emails the Studio would have sent to the OLIVED inbox. */
+const sentEmails: { subject: string; text: string; to?: string; replyTo?: { address: string } }[] = [];
 
 describe.skipIf(!url)("API with MySQL", () => {
   let db: Db;
@@ -48,7 +50,7 @@ describe.skipIf(!url)("API with MySQL", () => {
       STUDIO_FILES_DIR: path.join(tmpdir(), "olived-studio-test-files"),
     });
     db = createDb(url!);
-    app = createApp({ config, db, store: { save: async () => {} }, mailer: { sendEnquiry: async () => false }, log: silent });
+    app = createApp({ config, db, store: { save: async () => {} }, mailer: { sendEnquiry: async () => false, send: async (email) => { sentEmails.push(email); return true; } }, log: silent });
 
     await db.auditLog.deleteMany();
     await db.job.deleteMany();
@@ -388,6 +390,119 @@ describe.skipIf(!url)("API with MySQL", () => {
     const { design } = (await buyer.get(`/api/studio/designs/${id}`).expect(200)).body;
     expect(design.status).toBe("APPROVED");
     expect(design.versions[0].approvals).toEqual([{ decision: "APPROVED", comment: "Ready for production review." }]);
+
+    // The client is told in the Studio, with the team's message.
+    const { notifications } = (await buyer.get("/api/studio/notifications").expect(200)).body;
+    expect(notifications[0]).toMatchObject({ type: "design.approved", body: "Ready for production review.", link: `/studio/designs/${id}?step=review#messages` });
+  });
+
+  it("sets a new password with a code sent by email", async () => {
+    const before = sentEmails.length;
+    await client().post("/api/studio/auth/forgot").send({ email: "nobody-here@example.com" }).expect(200, { success: true });
+    expect(sentEmails.length).toBe(before);
+
+    const oldLogin = await signUp("reset-user@example.com");
+    await oldLogin.get("/api/studio/auth/me").expect(200);
+    await client().post("/api/studio/auth/forgot").send({ email: "Reset-User@example.com" }).expect(200, { success: true });
+    const email = sentEmails.at(-1)!;
+    expect(email.to).toBe("reset-user@example.com");
+    const code = email.subject.match(/\d{6}/)![0];
+    expect(email.text).toContain(code);
+
+    const fresh = client();
+    const wrong = code === "000000" ? "111111" : "000000";
+    await fresh.post("/api/studio/auth/reset").send({ email: "reset-user@example.com", code: wrong, password: "a brand new passphrase" }).expect(400);
+    await fresh.post("/api/studio/auth/reset").send({ email: "reset-user@example.com", code, password: "short" }).expect(400);
+    await fresh.post("/api/studio/auth/reset").send({ email: "reset-user@example.com", code, password: "a brand new passphrase" }).expect(200);
+
+    // Logged in with the new password; every earlier login is closed; the old password no longer works.
+    await fresh.get("/api/studio/auth/me").expect(200);
+    await oldLogin.get("/api/studio/auth/me").expect(401);
+    await client().post("/api/studio/auth/login").send({ email: "reset-user@example.com", password: "long enough password" }).expect(401);
+    await client().post("/api/studio/auth/login").send({ email: "reset-user@example.com", password: "a brand new passphrase" }).expect(200);
+
+    // A code works once.
+    await client().post("/api/studio/auth/reset").send({ email: "reset-user@example.com", code, password: "another new passphrase" }).expect(400);
+
+    // Five wrong codes end a code, even the right one afterwards.
+    await client().post("/api/studio/auth/forgot").send({ email: "reset-user@example.com" }).expect(200);
+    const second = sentEmails.at(-1)!.subject.match(/\d{6}/)![0];
+    const miss = second === "000000" ? "111111" : "000000";
+    for (let i = 0; i < 5; i++) {
+      await client().post("/api/studio/auth/reset").send({ email: "reset-user@example.com", code: miss, password: "another new passphrase" }).expect(400);
+    }
+    await client().post("/api/studio/auth/reset").send({ email: "reset-user@example.com", code: second, password: "another new passphrase" }).expect(400);
+
+    // Changing the password while logged in needs the current one.
+    await fresh.post("/api/studio/auth/password").send({ current: "not the password", password: "third new passphrase" })
+      .expect(400).expect((res) => expect(res.body.fields.current).toBeTruthy());
+    await fresh.post("/api/studio/auth/password").send({ current: "a brand new passphrase", password: "third new passphrase" }).expect(200);
+    await fresh.get("/api/studio/auth/me").expect(200);
+    await client().post("/api/studio/auth/login").send({ email: "reset-user@example.com", password: "third new passphrase" }).expect(200);
+    await client().post("/api/studio/auth/password").send({ current: "x", password: "third new passphrase" }).expect(401);
+  });
+
+  it("tells OLIVED about a new design in the Studio and by email, and keeps a conversation", async () => {
+    await db.user.create({
+      data: {
+        email: "inbox-admin@example.com", name: "Inbox Admin", passwordHash: await hashPassword("long enough password"),
+        memberships: { create: { role: "OLIVED_ADMIN", organization: { create: { name: "OLIVED" } } } },
+      },
+    });
+    const admin = client();
+    await admin.post("/api/studio/auth/login").send({ email: "inbox-admin@example.com", password: "long enough password" }).expect(200);
+    const buyer = await signUp("notify-buyer@example.com");
+    const stranger = await signUp("notify-stranger@example.com");
+    const { body } = await newDesign(buyer);
+    const id = body.design.id;
+    await buyer.post(`/api/studio/designs/${id}/versions`).send({ content: { fields: { ...sales, barcode: "6191234567897" }, colors } }).expect(201);
+    const emailsBefore = sentEmails.length;
+    await buyer.post(`/api/studio/designs/${id}/submit`).expect(200);
+
+    // Every OLIVED admin gets a notification that opens the design.
+    const inbox = (await admin.get("/api/studio/notifications").expect(200)).body;
+    expect(inbox.unread).toBeGreaterThanOrEqual(1);
+    expect(inbox.notifications[0]).toMatchObject({ type: "design.submitted", link: `/studio/admin/designs/${id}` });
+    expect(inbox.notifications[0].title).toContain("Spring");
+
+    // And the OLIVED inbox gets one email with the details, answering to the client.
+    expect(sentEmails.length).toBe(emailsBefore + 1);
+    const email = sentEmails.at(-1)!;
+    expect(email.subject).toContain("Spring");
+    expect(email.text).toContain("Company notify-buyer@example.com");
+    expect(email.text).toContain("6191234567897");
+    expect(email.text).toContain(`/studio/admin/designs/${id}`);
+    expect(email.replyTo?.address).toBe("notify-buyer@example.com");
+
+    // The conversation: the client writes, OLIVED answers, each side is told.
+    await buyer.post(`/api/studio/designs/${id}/messages`).send({ body: "  " }).expect(400);
+    await buyer.post(`/api/studio/designs/${id}/messages`).send({ body: "Can we use a darker green?" }).expect(201);
+    expect((await admin.get("/api/studio/notifications").expect(200)).body.notifications[0])
+      .toMatchObject({ type: "design.message", body: "Sam: Can we use a darker green?" });
+    await admin.post(`/api/studio/admin/designs/${id}/messages`).send({ body: "Yes, any green above 4.5:1 contrast works." }).expect(201);
+    const thread = (await buyer.get(`/api/studio/designs/${id}/messages`).expect(200)).body.messages;
+    expect(thread.map((m: { fromStaff: boolean; body: string }) => [m.fromStaff, m.body])).toEqual([
+      [false, "Can we use a darker green?"],
+      [true, "Yes, any green above 4.5:1 contrast works."],
+    ]);
+    const mine = (await buyer.get("/api/studio/notifications").expect(200)).body;
+    expect(mine.notifications[0]).toMatchObject({ type: "design.message", link: `/studio/designs/${id}?step=review#messages` });
+    expect(mine.unread).toBe(1);
+
+    // Read marks, only on one's own notifications.
+    await stranger.post("/api/studio/notifications/read").send({ ids: [mine.notifications[0].id] }).expect(200, { updated: 0 });
+    await buyer.post("/api/studio/notifications/read").send({}).expect(200, { updated: 1 });
+    expect((await buyer.get("/api/studio/notifications").expect(200)).body.unread).toBe(0);
+
+    // Another company sees neither the conversation nor can write in it.
+    await stranger.get(`/api/studio/designs/${id}/messages`).expect(404);
+    await stranger.post(`/api/studio/designs/${id}/messages`).send({ body: "Hello" }).expect(404);
+    await stranger.post(`/api/studio/admin/designs/${id}/messages`).send({ body: "Hello" }).expect(403);
+    await request(app).get("/api/studio/notifications").expect(401);
+
+    // Run the market check the submission queued, so no job is left for the tests after this one.
+    await runNextJob(db, handlers);
+    expect(await db.job.count({ where: { status: "PENDING" } })).toBe(0);
   });
 
   it("pages the admin lists and filters designs by status", async () => {
